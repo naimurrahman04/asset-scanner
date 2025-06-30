@@ -2,36 +2,69 @@
 
 INPUT_FILE="targets.txt"
 OUTPUT_FILE="scan_results.txt"
-TOTAL=$(grep -cve '^\s*$' "$INPUT_FILE")
-COUNT=0
+TEMP_DIR="./.scan_tmp"
+CONCURRENT_JOBS=5
 
 if [ ! -f "$INPUT_FILE" ]; then
     echo "[!] File '$INPUT_FILE' not found."
     exit 1
 fi
 
-echo "IP Asset_Name Detected_OS" > "$OUTPUT_FILE"
-echo "[*] Starting scan on $TOTAL IP(s)..."
+mkdir -p "$TEMP_DIR"
+> "$OUTPUT_FILE"
 
-while IFS= read -r IP || [ -n "$IP" ]; do
-    ((COUNT++))
-    echo "[*] ($COUNT/$TOTAL) Scanning: $IP"
+IPS=($(grep -v '^\s*$' "$INPUT_FILE"))
+TOTAL=${#IPS[@]}
+COUNT_FILE=".count.tmp"
+echo 0 > "$COUNT_FILE"
 
-    # Get asset name
-    HOSTNAME=$(nslookup "$IP" 2>/dev/null | awk -F'= ' '/name =/ {print $2}' | sed 's/\.$//' || echo "N/A")
+print_progress() {
+    local DONE=$(cat "$COUNT_FILE")
+    local PERCENT=$((DONE * 100 / TOTAL))
+    local FILLED=$((PERCENT / 2))
+    local EMPTY=$((50 - FILLED))
+    local BAR=$(printf "%0.s#" $(seq 1 $FILLED))
+    BAR+=$(printf "%0.s-" $(seq 1 $EMPTY))
+    echo -ne "[${BAR}] $DONE/$TOTAL scanned ($PERCENT%%)\r"
+}
+
+scan_ip() {
+    local IP="$1"
+    local TMP_FILE="$TEMP_DIR/$IP.result"
+
+    HOSTNAME=$(nslookup "$IP" 2>/dev/null | awk -F'= ' '/name =/ {print $2}' | sed 's/\.$//' | head -n 1)
     [ -z "$HOSTNAME" ] && HOSTNAME="N/A"
 
-    # Run nmap with full TCP port scan + OS detection
-    OS=$(nmap -sS -O -p- -T4 "$IP" 2>/dev/null | awk -F': ' '/OS details|OS guesses/ {print $2; exit}')
+    OS=$(nmap -Pn -sS -O -p- -T4 "$IP" 2>/dev/null | awk -F': ' '/OS details|OS guesses/ {print $2; exit}')
     [ -z "$OS" ] && OS="Unknown"
+    OS=$(echo "$OS" | cut -c1-30)
 
-    # Append result in space-separated format
-    echo "$IP $HOSTNAME $OS" >> "$OUTPUT_FILE"
+    printf "%-15s %-30s %-30s\n" "$IP" "$HOSTNAME" "$OS" > "$TMP_FILE"
 
-    # Progress
-    PERCENT=$(( COUNT * 100 / TOTAL ))
-    echo "[+] Completed $COUNT/$TOTAL ($PERCENT%)"
-    echo
-done < "$INPUT_FILE"
+    flock "$COUNT_FILE" bash -c 'echo $(( $(cat '"$COUNT_FILE"') + 1 )) > '"$COUNT_FILE"
+    print_progress
+}
 
-echo "[✓] Scan completed. Results saved to '$OUTPUT_FILE'."
+export -f scan_ip
+export TEMP_DIR
+export COUNT_FILE
+export -f print_progress
+
+START_TIME=$(date +%s)
+echo "Scan started at: $(date)"
+echo "[*] Scanning $TOTAL hosts with up to $CONCURRENT_JOBS concurrent jobs..."
+
+printf "IP\t\tAsset_Name\t\t\tOS_Detected\n" > "$OUTPUT_FILE"
+echo "===============================================================" >> "$OUTPUT_FILE"
+
+printf "%s\n" "${IPS[@]}" | xargs -n 1 -P "$CONCURRENT_JOBS" -I {} bash -c 'scan_ip "$@"' _ {}
+
+cat "$TEMP_DIR"/*.result >> "$OUTPUT_FILE"
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
+
+# Cleanup
+rm -rf "$TEMP_DIR" "$COUNT_FILE"
+echo
+echo -e "\n[✓] Scans completed in $ELAPSED seconds."
+echo "[✓] Results saved to '$OUTPUT_FILE'."
