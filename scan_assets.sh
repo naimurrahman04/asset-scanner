@@ -3,8 +3,8 @@
 INPUT_FILE="targets.txt"
 OUTPUT_FILE="scan_results.txt"
 TEMP_DIR="./.scan_tmp"
-CONCURRENT_JOBS=5
 COUNT_FILE=".count.tmp"
+CONCURRENT_JOBS=5
 
 if [ ! -f "$INPUT_FILE" ]; then
     echo "[!] File '$INPUT_FILE' not found."
@@ -31,11 +31,21 @@ print_progress() {
 scan_ip() {
     local IP="$1"
     local TMP_FILE="$TEMP_DIR/$IP.result"
+    local HOSTNAME="N/A"
+    local OS="Unknown"
 
-    HOSTNAME=$(nslookup "$IP" 2>/dev/null | awk -F'= ' '/name =/ {print $2}' | sed 's/\.$//' | head -n 1)
-    [ -z "$HOSTNAME" ] && HOSTNAME="N/A"
+    # Try ping
+    if ping -c 1 -W 1 "$IP" &>/dev/null; then
+        HOSTNAME=$(nslookup "$IP" 2>/dev/null | awk -F'= ' '/name =/ {print $2}' | sed 's/\.$//' | head -n 1)
+        [ -z "$HOSTNAME" ] && HOSTNAME="N/A"
+        OS=$(nmap -sS -O -p- -T4 "$IP" 2>/dev/null | awk -F': ' '/OS details|OS guesses/ {print $2; exit}')
+    else
+        # Ping failed — fallback to nmap with -Pn
+        HOSTNAME=$(nslookup "$IP" 2>/dev/null | awk -F'= ' '/name =/ {print $2}' | sed 's/\.$//' | head -n 1)
+        [ -z "$HOSTNAME" ] && HOSTNAME="Unresolved"
+        OS=$(nmap -Pn -sS -O -p- -T4 "$IP" 2>/dev/null | awk -F': ' '/OS details|OS guesses/ {print $2; exit}')
+    fi
 
-    OS=$(nmap -Pn -sS -O -p- -T4 "$IP" 2>/dev/null | awk -F': ' '/OS details|OS guesses/ {print $2; exit}')
     [ -z "$OS" ] && OS="Unknown"
     OS=$(echo "$OS" | cut -c1-30)
 
@@ -59,14 +69,14 @@ echo "Scan started at: $(date)"
 echo "[*] Scanning $TOTAL hosts with up to $CONCURRENT_JOBS concurrent jobs..."
 echo
 
-# Write header
+# Header
 printf "IP\t\tAsset_Name\t\t\tOS_Detected\n" > "$OUTPUT_FILE"
 echo "===============================================================" >> "$OUTPUT_FILE"
 
-# Launch parallel scans
+# Parallel scan
 printf "%s\n" "${IPS[@]}" | xargs -P "$CONCURRENT_JOBS" -I {} bash -c 'scan_ip "$@"' _ {}
 
-# Combine results
+# Merge
 cat "$TEMP_DIR"/*.result >> "$OUTPUT_FILE"
 
 END_TIME=$(date +%s)
