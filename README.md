@@ -1,17 +1,23 @@
-# Asset Scanner - NSLookup + Nmap OS Detection Tool
+# Asset Scanner - Bash Based Network Recon Tool
 
-This Python-based tool reads a list of IP addresses or hostnames from a `.txt` file, performs:
-- 🔍 `nslookup` to resolve asset names
-- 🔎 Full TCP port scan using `nmap -sS -O -p- -T4` to detect OS
-- 📄 Exports the result as a CSV: `IP`, `Asset Name`, `Detected OS`
-- ✅ Shows progress (completed, total, percentage)
+A lightweight Bash script to automate asset discovery and operating system fingerprinting using `nslookup` and `nmap`.
 
 ---
 
-## 📦 Requirements
+## 🔍 Features
 
-- Python 3.x
-- [Nmap](https://nmap.org/download.html) installed and accessible in `PATH`
-- Python modules:
-  ```bash
-  pip install python-nmap
+- Reads a list of target IPs or hostnames from a text file
+- Performs:
+  - `nslookup` to get asset names
+  - Full TCP SYN scan with OS detection using Nmap (`-sS -O -p- -T4`)
+- Tracks scan progress with percentage
+- Outputs results in **space-separated format**:  
+  `IP Asset_Name Detected_OS`
+- Saves results to `scan_results.txt`
+
+---
+
+## 📁 Input
+
+Create a file named `targets.txt` in the same directory:
+
