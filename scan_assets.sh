@@ -4,6 +4,7 @@ INPUT_FILE="targets.txt"
 OUTPUT_FILE="scan_results.txt"
 TEMP_DIR="./.scan_tmp"
 CONCURRENT_JOBS=5
+COUNT_FILE=".count.tmp"
 
 if [ ! -f "$INPUT_FILE" ]; then
     echo "[!] File '$INPUT_FILE' not found."
@@ -12,11 +13,10 @@ fi
 
 mkdir -p "$TEMP_DIR"
 > "$OUTPUT_FILE"
+echo 0 > "$COUNT_FILE"
 
 IPS=($(grep -v '^\s*$' "$INPUT_FILE"))
 TOTAL=${#IPS[@]}
-COUNT_FILE=".count.tmp"
-echo 0 > "$COUNT_FILE"
 
 print_progress() {
     local DONE=$(cat "$COUNT_FILE")
@@ -41,30 +41,39 @@ scan_ip() {
 
     printf "%-15s %-30s %-30s\n" "$IP" "$HOSTNAME" "$OS" > "$TMP_FILE"
 
-    flock "$COUNT_FILE" bash -c 'echo $(( $(cat '"$COUNT_FILE"') + 1 )) > '"$COUNT_FILE"
+    {
+        flock 200
+        CUR=$(cat "$COUNT_FILE")
+        echo $((CUR + 1)) > "$COUNT_FILE"
+    } 200>"$COUNT_FILE.lock"
+
     print_progress
 }
 
 export -f scan_ip
-export TEMP_DIR
-export COUNT_FILE
+export TEMP_DIR COUNT_FILE
 export -f print_progress
 
 START_TIME=$(date +%s)
 echo "Scan started at: $(date)"
 echo "[*] Scanning $TOTAL hosts with up to $CONCURRENT_JOBS concurrent jobs..."
+echo
 
+# Write header
 printf "IP\t\tAsset_Name\t\t\tOS_Detected\n" > "$OUTPUT_FILE"
 echo "===============================================================" >> "$OUTPUT_FILE"
 
-printf "%s\n" "${IPS[@]}" | xargs -n 1 -P "$CONCURRENT_JOBS" -I {} bash -c 'scan_ip "$@"' _ {}
+# Launch parallel scans
+printf "%s\n" "${IPS[@]}" | xargs -P "$CONCURRENT_JOBS" -I {} bash -c 'scan_ip "$@"' _ {}
 
+# Combine results
 cat "$TEMP_DIR"/*.result >> "$OUTPUT_FILE"
+
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
 
 # Cleanup
-rm -rf "$TEMP_DIR" "$COUNT_FILE"
+rm -rf "$TEMP_DIR" "$COUNT_FILE" "$COUNT_FILE.lock"
 echo
-echo -e "\n[✓] Scans completed in $ELAPSED seconds."
+echo "[✓] All scans completed in $ELAPSED seconds."
 echo "[✓] Results saved to '$OUTPUT_FILE'."
